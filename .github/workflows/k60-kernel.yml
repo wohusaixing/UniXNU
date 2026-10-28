@@ -50,6 +50,19 @@ jobs:
           git -C device log -1 --format='device %h %s'
           git -C uefi log -1 --format='uefi %h %s'
 
+      - name: Enable the source pthread and corecrypto providers
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          path = Path('device/configs/mondrian_defconfig')
+          text = path.read_text()
+          for name in ('CONFIG_XNU_SOURCE_PTHREAD', 'CONFIG_XNU_SOURCE_CORECRYPTO14'):
+              text = text.replace(name + '=n', name + '=y')
+          path.write_text(text)
+          print('enabled source pthread + corecrypto')
+          PY
+          grep -nE 'SOURCE_PTHREAD|SOURCE_CORECRYPTO14' device/configs/mondrian_defconfig
+
       - uses: actions/setup-python@v5
         with:
           python-version: "3.13"
