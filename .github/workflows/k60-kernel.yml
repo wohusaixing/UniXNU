@@ -96,6 +96,20 @@ jobs:
           cd core
           ./unixnu build kernel -D ../device
 
+      - name: Stage the device drivers the firmware package expects
+        run: |
+          set -euo pipefail
+          TREE=core/out/mondrian/ipados-16.6.1-20G81/mondrian/tree
+          mkdir -p "$TREE/drivers"
+          for d in device/drivers/*/; do
+            name=$(basename "$d")
+            if [ ! -e "$TREE/drivers/$name" ]; then
+              cp -a "$d" "$TREE/drivers/$name"
+              echo "staged drivers/$name"
+            fi
+          done
+          ls "$TREE/drivers"
+
       - name: Build the UEFI firmware
         run: |
           cd core
