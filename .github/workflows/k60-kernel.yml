@@ -152,6 +152,17 @@ jobs:
           cd core
           ./unixnu build firmware --uefi ../uefi -D ../device --target DEBUG
 
+      - name: Dump kernel-build configuration (debug)
+        if: always()
+        run: |
+          set -x
+          find core/out -maxdepth 6 -name '.config' -print -exec grep -nE 'BUILD_ARCHIVES|SOURCE_PTHREAD|SOURCE_CORECRYPTO14|CRYPTO_BOOTSTRAP' {} \; || true
+          S=$(find core/out -maxdepth 8 -path '*tree/scripts/build-xnu-4k-baseline.sh' | head -1)
+          echo "script=$S"
+          wc -l "$S" || true
+          grep -n 'CRYPTO_ARCHIVE' "$S" | head -10 || true
+          sed -n '910,940p' "$S" || true
+
       - name: Build the payload
         run: |
           cd core
