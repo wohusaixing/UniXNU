@@ -1,0 +1,107 @@
+name: K60 kernel build (macOS)
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: macos-26
+    timeout-minutes: 360
+    steps:
+      - name: Check out UniXNU
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Check out the K60 device repository
+        uses: actions/checkout@v4
+        with:
+          repository: Emilelu/UniXNU-mondrian
+          ref: main
+          path: device
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Install host tools
+        run: |
+          brew install llvm lld mtools dtc || brew upgrade llvm lld mtools dtc || true
+          command -v unifdef >/dev/null || brew install unifdef
+
+      - name: Report the runner toolchain
+        run: |
+          sw_vers
+          uname -m
+          xcodebuild -version
+          ls -d /Applications/Xcode_*.app || true
+          xcrun --sdk iphoneos --show-sdk-version || true
+          for tool in git make clang cmake ninja dtc mformat mcopy; do
+            printf '%-8s %s\n' "$tool" "$(command -v "$tool" || echo MISSING)"
+          done
+          df -h "$GITHUB_WORKSPACE"
+
+      - name: Stage proprietary inputs and the macOS build paths
+        run: |
+          set -euo pipefail
+          FW="$RUNNER_TEMP/fw"
+          mkdir -p "$FW"
+          for f in gmu_gen70000.bin a730_sqe.fw a730_zap.mdt a730_zap.b01 a730_zap.b02; do
+            base64 -D -i "k60-inputs/fw/$f.b64" -o "$FW/$f"
+          done
+          ls -l "$FW"
+          WS="$GITHUB_WORKSPACE"
+          TREE="$WS/out/mondrian/tree"
+          XCODE_DEV="$(ls -d /Applications/Xcode_*.app | tail -1)/Contents/Developer"
+          echo "XCODE_DEV=$XCODE_DEV" >> "$GITHUB_ENV"
+          echo "DEVELOPER_DIR=$XCODE_DEV" >> "$GITHUB_ENV"
+          sudo mkdir -p \
+            /Volumes/PongDev/Applications/Xcode.app/Contents \
+            /Volumes/PongDev/build/Pong-iOS16-v92-settings-adreno \
+            /Volumes/PongDev/build/Pong-iOS16-v45-high-scratch \
+            /Volumes/PongDev/build/Pong-iOS16-native \
+            /Volumes/PongDev/build/UniXNU-XNU-iOS16/pong \
+            /Volumes/PongDev/build/Pong-DarwinBoot22 \
+            /Volumes/PongDev/source
+          sudo ln -sfn "$XCODE_DEV" /Volumes/PongDev/Applications/Xcode.app/Contents/Developer
+          sudo ln -sfn "$FW" /Volumes/PongDev/build/Pong-iOS16-v92-settings-adreno/firmware
+          sudo ln -sfn "$TREE" /Volumes/PongDev/build/Pong-iOS16-v45-high-scratch/tree
+          sudo ln -sfn "$TREE" /Volumes/PongDev/build/Pong-iOS16-native/tree
+          sudo ln -sfn "$TREE" /Volumes/PongDev/build/UniXNU-XNU-iOS16/pong/tree
+          sudo ln -sfn "$WS/build/darwinboot22" /Volumes/PongDev/build/Pong-DarwinBoot22
+          ls -l /Volumes/PongDev/build /Volumes/PongDev/build/Pong-iOS16-v45-high-scratch
+
+      - name: Configure the K60 device
+        run: |
+          ./unixnu defconfig mondrian_defconfig -D device
+          ./unixnu status -D device --json > "$RUNNER_TEMP/status.json" || true
+          head -20 "$RUNNER_TEMP/status.json" || true
+
+      - name: Build the XNU kernel
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          ./unixnu build kernel -D device
+
+      - name: Collect artifacts
+        if: always()
+        run: |
+          mkdir -p artifacts
+          find out -type f \( -name 'kernel.macho' -o -name '*.log' -o -name 'build-report.json' -o -name 'bindings.json' -o -name 'interface-audit.json' -o -name '*.json' \) -print0 2>/dev/null |
+            while IFS= read -r -d '' f; do
+              mkdir -p "artifacts/$(dirname "$f")"
+              cp -f "$f" "artifacts/$f"
+            done
+          du -sh artifacts || true
+          find artifacts -type f | head -60 || true
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: k60-kernel
+          path: artifacts/**
+          if-no-files-found: warn
+          retention-days: 7
