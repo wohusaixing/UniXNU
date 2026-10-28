@@ -21,7 +21,7 @@ jobs:
           set -euo pipefail
           git clone --depth 1 --branch k60 --recurse-submodules --shallow-submodules \
             https://github.com/Emilelu/UniXNU core
-          git clone --depth 1 https://github.com/wohusaixing/UniXNU-mondrian device
+          git clone --depth 1 https://github.com/Emilelu/UniXNU-mondrian device
           git clone --depth 1 --recurse-submodules --shallow-submodules \
             https://github.com/Emilelu/uefi-mondrian uefi
           git -C core log -1 --format='core %h %s'
@@ -29,6 +29,24 @@ jobs:
           grep -A3 'memory@' device/dts/mondrian.dts || true
           echo "--- device board.toml dram ---"
           grep -n 'dram_size' device/board.toml || true
+
+      - name: Apply this unit's 16 GiB DRAM window
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          dts = Path('device/dts/mondrian.dts')
+          text = dts.read_text()
+          text = text.replace('reg = <0x0 0x80000000 0x3 0x0>;',
+                              'reg = <0x0 0x80000000 0x0 0x80000000>;')
+          dts.write_text(text)
+          board = Path('device/board.toml')
+          content = board.read_text()
+          content = content.replace('dram_size = "0x300000000"', 'dram_size = "0x80000000"')
+          board.write_text(content)
+          print('patched for the 16 GiB unit')
+          PY
+          grep -n 'reg = <0x0 0x80000000' device/dts/mondrian.dts
+          grep -n 'dram_size' device/board.toml
           git -C device log -1 --format='device %h %s'
           git -C uefi log -1 --format='uefi %h %s'
 
