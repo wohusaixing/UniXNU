@@ -16,14 +16,17 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Clone the K60 core branch and the device repository
+      - name: Clone the K60 core branch, device and firmware repositories
         run: |
           set -euo pipefail
           git clone --depth 1 --branch k60 --recurse-submodules --shallow-submodules \
             https://github.com/Emilelu/UniXNU core
           git clone --depth 1 https://github.com/Emilelu/UniXNU-mondrian device
+          git clone --depth 1 --recurse-submodules --shallow-submodules \
+            https://github.com/Emilelu/uefi-mondrian uefi
           git -C core log -1 --format='core %h %s'
           git -C device log -1 --format='device %h %s'
+          git -C uefi log -1 --format='uefi %h %s'
 
       - uses: actions/setup-python@v5
         with:
@@ -39,8 +42,6 @@ jobs:
           sw_vers
           uname -m
           xcodebuild -version
-          ls -d /Applications/Xcode_*.app || true
-          xcrun --sdk iphoneos --show-sdk-version || true
           for tool in git make clang cmake ninja dtc mformat mcopy; do
             printf '%-8s %s\n' "$tool" "$(command -v "$tool" || echo MISSING)"
           done
@@ -86,8 +87,7 @@ jobs:
           cd core
           ./unixnu defconfig mondrian_defconfig -D ../device
           ./unixnu fetch -D ../device
-          ./unixnu status -D ../device --json > "$RUNNER_TEMP/status.json" || true
-          head -30 "$RUNNER_TEMP/status.json" || true
+          ./unixnu status -D ../device 2>&1 | tail -40
 
       - name: Build the XNU kernel and prelink
         env:
@@ -96,22 +96,42 @@ jobs:
           cd core
           ./unixnu build kernel -D ../device
 
+      - name: Build the UEFI firmware
+        run: |
+          cd core
+          ./unixnu build firmware --uefi ../uefi -D ../device --target DEBUG
+
+      - name: Build the payload
+        run: |
+          cd core
+          ./unixnu build payload -D ../device
+
+      - name: Pack the boot image
+        run: |
+          set -euo pipefail
+          mkdir -p "$GITHUB_WORKSPACE/out-artifacts"
+          cd core
+          ./unixnu bootimg --uefi ../uefi -D ../device -o "$GITHUB_WORKSPACE/out-artifacts/mondrian-boot.img"
+          ls -l "$GITHUB_WORKSPACE/out-artifacts"
+
       - name: Collect artifacts
         if: always()
         run: |
           mkdir -p artifacts
-          find core/out -type f \( -name 'kernel.macho' -o -name '*.log' -o -name '*.json' \) -print0 2>/dev/null |
-            while IFS= read -r -d '' f; do
-              mkdir -p "artifacts/$(dirname "$f")"
-              cp -f "$f" "artifacts/$f"
-            done
+          for f in $(find core/out -type f \( -name 'kernel.macho' -o -name 'boot*.img' -o -name '*.log' \) 2>/dev/null); do
+            mkdir -p "artifacts/$(dirname "$f")"
+            cp -f "$f" "artifacts/$f"
+          done
+          for f in out-artifacts/*; do
+            [ -f "$f" ] && cp -f "$f" artifacts/
+          done
           du -sh artifacts || true
           find artifacts -type f | head -40 || true
 
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: k60-kernel
+          name: k60-boot-image
           path: artifacts/**
           if-no-files-found: warn
           retention-days: 7
