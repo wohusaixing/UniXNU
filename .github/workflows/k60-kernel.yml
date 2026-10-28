@@ -21,10 +21,14 @@ jobs:
           set -euo pipefail
           git clone --depth 1 --branch k60 --recurse-submodules --shallow-submodules \
             https://github.com/Emilelu/UniXNU core
-          git clone --depth 1 https://github.com/Emilelu/UniXNU-mondrian device
+          git clone --depth 1 https://github.com/wohusaixing/UniXNU-mondrian device
           git clone --depth 1 --recurse-submodules --shallow-submodules \
             https://github.com/Emilelu/uefi-mondrian uefi
           git -C core log -1 --format='core %h %s'
+          echo "--- device dts memory ---"
+          grep -A3 'memory@' device/dts/mondrian.dts || true
+          echo "--- device board.toml dram ---"
+          grep -n 'dram_size' device/board.toml || true
           git -C device log -1 --format='device %h %s'
           git -C uefi log -1 --format='uefi %h %s'
 
