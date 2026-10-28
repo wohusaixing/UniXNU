@@ -143,7 +143,9 @@ jobs:
           set -euo pipefail
           mkdir -p "$GITHUB_WORKSPACE/out-artifacts"
           cd core
-          ./unixnu bootimg --uefi ../uefi -D ../device -o "$GITHUB_WORKSPACE/out-artifacts/mondrian-boot.img"
+          DTB="$PWD/out/mondrian/ipados-16.6.1-20G81/mondrian/device-tree/hardware.dtb"
+          ls -l "$DTB"
+          ./unixnu bootimg --uefi ../uefi --dtb "$DTB" -D ../device -o "$GITHUB_WORKSPACE/out-artifacts/mondrian-boot.img"
           ls -l "$GITHUB_WORKSPACE/out-artifacts"
 
       - name: Collect artifacts
