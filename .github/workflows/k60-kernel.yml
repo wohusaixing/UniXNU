@@ -11,17 +11,19 @@ jobs:
     runs-on: macos-26
     timeout-minutes: 360
     steps:
-      - name: Check out UniXNU
+      - name: Check out this repository (firmware inputs)
         uses: actions/checkout@v4
         with:
           persist-credentials: false
 
-      - name: Check out the K60 device repository
-        uses: actions/checkout@v4
-        with:
-          repository: Emilelu/UniXNU-mondrian
-          ref: main
-          path: device
+      - name: Clone the K60 core branch and the device repository
+        run: |
+          set -euo pipefail
+          git clone --depth 1 --branch k60 --recurse-submodules --shallow-submodules \
+            https://github.com/Emilelu/UniXNU core
+          git clone --depth 1 https://github.com/Emilelu/UniXNU-mondrian device
+          git -C core log -1 --format='core %h %s'
+          git -C device log -1 --format='device %h %s'
 
       - uses: actions/setup-python@v5
         with:
@@ -44,7 +46,7 @@ jobs:
           done
           df -h "$GITHUB_WORKSPACE"
 
-      - name: Stage proprietary inputs and the macOS build paths
+      - name: Stage firmware inputs and the Pong developer paths
         run: |
           set -euo pipefail
           FW="$RUNNER_TEMP/fw"
@@ -54,9 +56,8 @@ jobs:
           done
           ls -l "$FW"
           WS="$GITHUB_WORKSPACE"
-          TREE="$WS/out/mondrian/tree"
+          TREE="$WS/core/out/mondrian/ipados-16.6.1-20G81/mondrian/tree"
           XCODE_DEV="$(ls -d /Applications/Xcode_*.app | tail -1)/Contents/Developer"
-          echo "XCODE_DEV=$XCODE_DEV" >> "$GITHUB_ENV"
           echo "DEVELOPER_DIR=$XCODE_DEV" >> "$GITHUB_ENV"
           sudo mkdir -p \
             /Volumes/PongDev/Applications/Xcode.app/Contents \
@@ -71,32 +72,41 @@ jobs:
           sudo ln -sfn "$TREE" /Volumes/PongDev/build/Pong-iOS16-v45-high-scratch/tree
           sudo ln -sfn "$TREE" /Volumes/PongDev/build/Pong-iOS16-native/tree
           sudo ln -sfn "$TREE" /Volumes/PongDev/build/UniXNU-XNU-iOS16/pong/tree
-          sudo ln -sfn "$WS/build/darwinboot22" /Volumes/PongDev/build/Pong-DarwinBoot22
-          ls -l /Volumes/PongDev/build /Volumes/PongDev/build/Pong-iOS16-v45-high-scratch
+          ls -l /Volumes/PongDev/build
 
-      - name: Configure the K60 device
+      - name: Run the K60 macOS preflight
+        env:
+          DEVICE_DIR: ${{ github.workspace }}/device
         run: |
-          ./unixnu defconfig mondrian_defconfig -D device
-          ./unixnu status -D device --json > "$RUNNER_TEMP/status.json" || true
-          head -20 "$RUNNER_TEMP/status.json" || true
+          cd core
+          bash ../device/scripts/k60-macos-preflight.sh
 
-      - name: Build the XNU kernel
+      - name: Configure and fetch
+        run: |
+          cd core
+          ./unixnu defconfig mondrian_defconfig -D ../device
+          ./unixnu fetch -D ../device
+          ./unixnu status -D ../device --json > "$RUNNER_TEMP/status.json" || true
+          head -30 "$RUNNER_TEMP/status.json" || true
+
+      - name: Build the XNU kernel and prelink
         env:
           GITHUB_TOKEN: ${{ github.token }}
         run: |
-          ./unixnu build kernel -D device
+          cd core
+          ./unixnu build kernel -D ../device
 
       - name: Collect artifacts
         if: always()
         run: |
           mkdir -p artifacts
-          find out -type f \( -name 'kernel.macho' -o -name '*.log' -o -name 'build-report.json' -o -name 'bindings.json' -o -name 'interface-audit.json' -o -name '*.json' \) -print0 2>/dev/null |
+          find core/out -type f \( -name 'kernel.macho' -o -name '*.log' -o -name '*.json' \) -print0 2>/dev/null |
             while IFS= read -r -d '' f; do
               mkdir -p "artifacts/$(dirname "$f")"
               cp -f "$f" "artifacts/$f"
             done
           du -sh artifacts || true
-          find artifacts -type f | head -60 || true
+          find artifacts -type f | head -40 || true
 
       - uses: actions/upload-artifact@v4
         if: always()
