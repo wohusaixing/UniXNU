@@ -50,7 +50,7 @@ jobs:
           FW="$RUNNER_TEMP/fw"
           mkdir -p "$FW"
           for f in gmu_gen70000.bin a730_sqe.fw a730_zap.mdt a730_zap.b01 a730_zap.b02; do
-            base64 -D -i "k60-inputs/fw/$f.b64" -o "$FW/$f"
+            cp -f "k60-inputs/fw/$f" "$FW/$f"
           done
           ls -l "$FW"
           WS="$GITHUB_WORKSPACE"
