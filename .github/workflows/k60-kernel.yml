@@ -58,8 +58,10 @@ jobs:
           text = path.read_text()
           for name in ('CONFIG_XNU_SOURCE_PTHREAD', 'CONFIG_XNU_SOURCE_CORECRYPTO14'):
               text = text.replace(name + '=n', name + '=y')
+          if 'CONFIG_XNU_BUILD_ARCHIVES' not in text:
+              text += 'CONFIG_XNU_BUILD_ARCHIVES=y\n'
           path.write_text(text)
-          print('enabled source pthread + corecrypto')
+          print('enabled source pthread + corecrypto + archive builders')
           PY
           grep -nE 'SOURCE_PTHREAD|SOURCE_CORECRYPTO14' device/configs/mondrian_defconfig
 
