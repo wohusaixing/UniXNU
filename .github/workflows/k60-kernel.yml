@@ -37,11 +37,11 @@ jobs:
           dts = Path('device/dts/mondrian.dts')
           text = dts.read_text()
           text = text.replace('reg = <0x0 0x80000000 0x3 0x0>;',
-                              'reg = <0x0 0x80000000 0x0 0x80000000>;')
+                              'reg = <0x0 0x80000000 0x0 0x6a000000>;')
           dts.write_text(text)
           board = Path('device/board.toml')
           content = board.read_text()
-          content = content.replace('dram_size = "0x300000000"', 'dram_size = "0x80000000"')
+          content = content.replace('dram_size = "0x300000000"', 'dram_size = "0x6a000000"')
           board.write_text(content)
           print('patched for the 16 GiB unit')
           PY
@@ -117,24 +117,6 @@ jobs:
         run: |
           cd core
           ./unixnu build kernel -D ../device
-
-      - name: Drop the ACPI table module the firmware repository does not ship
-        run: |
-          python3 - <<'PY'
-          from pathlib import Path
-          pkg = Path('uefi/Platforms/Xiaomi/mondrianPkg')
-          for name, needle in (
-              ('mondrian.dsc', '  mondrian/AcpiTables.inf'),
-              ('mondrian.fdf', '  INF RuleOverride = ACPITABLE mondrian/AcpiTables.inf'),
-          ):
-              path = pkg / name
-              text = path.read_text()
-              if needle in text:
-                  path.write_text(text.replace(needle, '# ' + needle.strip(), 1))
-                  print('commented', name)
-              else:
-                  print('no ACPI entry in', name)
-          PY
 
       - name: Stage the device drivers the firmware package expects
         run: |
