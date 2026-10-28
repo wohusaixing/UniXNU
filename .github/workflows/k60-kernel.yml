@@ -96,6 +96,24 @@ jobs:
           cd core
           ./unixnu build kernel -D ../device
 
+      - name: Drop the ACPI table module the firmware repository does not ship
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          pkg = Path('uefi/Platforms/Xiaomi/mondrianPkg')
+          for name, needle in (
+              ('mondrian.dsc', '  mondrian/AcpiTables.inf'),
+              ('mondrian.fdf', '  INF RuleOverride = ACPITABLE mondrian/AcpiTables.inf'),
+          ):
+              path = pkg / name
+              text = path.read_text()
+              if needle in text:
+                  path.write_text(text.replace(needle, '# ' + needle.strip(), 1))
+                  print('commented', name)
+              else:
+                  print('no ACPI entry in', name)
+          PY
+
       - name: Stage the device drivers the firmware package expects
         run: |
           set -euo pipefail
