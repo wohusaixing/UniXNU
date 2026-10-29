@@ -149,12 +149,6 @@ jobs:
           grep -c 'com.apple.kec.pthread' core/profiles/os/ipados-16.6.1-20G81/profile.toml
           grep -n 'CONFIG_XNU_SOURCE_PTHREAD\|CONFIG_XNU_SOURCE_CORECRYPTO14' device/configs/mondrian_defconfig
 
-      - name: Add the K60 panic-report patch
-        run: |
-          cp .k60/zzz-k60-panic-report.patch device/patches/xnu/
-          echo 'zzz-k60-panic-report.patch' >> device/patches/xnu/series
-          tail -2 device/patches/xnu/series
-
       - name: Build the XNU kernel and prelink
         env:
           GITHUB_TOKEN: ${{ github.token }}
