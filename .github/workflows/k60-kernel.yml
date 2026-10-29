@@ -30,6 +30,14 @@ jobs:
           echo "--- device board.toml dram ---"
           grep -n 'dram_size' device/board.toml || true
 
+      - name: Pin the core branch to the last buildable commit
+        run: |
+          git -C core fetch --depth 1 origin 9f59b34a6dfec7da6471c2b1330e9b85bf0bd127
+          git -C core checkout --detach FETCH_HEAD
+          git -C core log -1 --format='core %h %s'
+          grep -c 'com.apple.kec.pthread' core/profiles/os/ipados-16.6.1-20G81/profile.toml || true
+          grep -n 'security-mode-change-enable' core/profiles/os/ipados-16.6.1-20G81/profile.toml || true
+
       - name: Apply this unit's 16 GiB DRAM window
         run: |
           python3 - <<'PY'
