@@ -205,7 +205,7 @@ jobs:
         if: always()
         run: |
           mkdir -p artifacts
-          for f in $(find core/out -type f \( -name 'kernel.macho' -o -name 'boot*.img' -o -name '*.log' \) 2>/dev/null); do
+          for f in $(find core/out -type f \( -name 'kernel.macho' -o -name 'boot*.img' -o -name '*.log' -o -name 'mach.development*.unstripped*' -o -name '*.map' \) 2>/dev/null); do
             mkdir -p "artifacts/$(dirname "$f")"
             cp -f "$f" "artifacts/$f"
           done
