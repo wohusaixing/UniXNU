@@ -111,6 +111,19 @@ jobs:
           ./unixnu fetch -D ../device
           ./unixnu status -D ../device 2>&1 | tail -40
 
+      - name: Auto-boot the payload entry
+        run: |
+          python3 - <<'PY'
+          import re
+          from pathlib import Path
+          p = Path('device/board.toml')
+          t = p.read_text()
+          t = re.sub(r'(?m)^timeout = -1$', 'timeout = 5', t)
+          p.write_text(t)
+          print('payload timeout set to 5 s')
+          PY
+          grep -n '^timeout' device/board.toml
+
       - name: Add the pthread kext to the prelink roots
         run: |
           python3 - <<'PY'
