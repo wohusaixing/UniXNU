@@ -1,0 +1,78 @@
+diff --git a/osfmk/kern/debug.c b/osfmk/kern/debug.c
+index 0a00656..36c44f4 100644
+--- a/osfmk/kern/debug.c
++++ b/osfmk/kern/debug.c
+@@ -1279,6 +1279,10 @@ debugger_collect_diagnostics(unsigned int exception, unsigned int code, unsigned
+ #pragma clang diagnostic pop
+ 		}
+ 		paniclog_append_noflush("\n");
++		/* K60: the ramoops console mirror already holds the reason; reset now. */
++		if (!panicDebugging) {
++			PE_k60_reset_now();
++		}
+ 	}
+ #if defined(__x86_64__)
+ 	else if (((debugger_current_op == DBOP_DEBUGGER) && debugger_is_panic)) {
+diff --git a/pexpert/arm/pe_init.c b/pexpert/arm/pe_init.c
+index 04dda53..33fb849 100644
+--- a/pexpert/arm/pe_init.c
++++ b/pexpert/arm/pe_init.c
+@@ -763,6 +763,46 @@ PE_sync_panic_buffers(void)
+ 	}
+ }
+ 
++/* K60 bring-up: PSCI SYSTEM_RESET with the conduit the boot loader advertised. */
++static int
++k60_psci_uses_hvc(void)
++{
++	DTEntry chosen;
++	void const *prop;
++	unsigned int size = 0;
++	static int cached = -1;
++
++	if (cached >= 0) {
++		return cached;
++	}
++	cached = 0;
++	if (SecureDTLookupEntry(0, "/chosen", &chosen) == kSuccess &&
++	    SecureDTGetProperty(chosen, "psci-method", &prop, &size) == kSuccess &&
++	    size >= 3 && ((const char *)prop)[0] == 'h' && ((const char *)prop)[1] == 'v' &&
++	    ((const char *)prop)[2] == 'c') {
++		cached = 1;
++	}
++	return cached;
++}
++
++void
++PE_k60_reset_now(void)
++{
++	register uint64_t x0 __asm__("x0") = 0x84000009ULL; /* PSCI SYSTEM_RESET */
++	register uint64_t x1 __asm__("x1") = 0;
++	register uint64_t x2 __asm__("x2") = 0;
++	register uint64_t x3 __asm__("x3") = 0;
++
++	if (k60_psci_uses_hvc()) {
++		__asm__ volatile ("hvc #0" : "+r"(x0), "+r"(x1), "+r"(x2), "+r"(x3) : : "memory");
++	} else {
++		__asm__ volatile ("smc #0" : "+r"(x0), "+r"(x1), "+r"(x2), "+r"(x3) : : "memory");
++	}
++	for (;;) {
++		__asm__ volatile ("wfe");
++	}
++}
++
+ static void
+ pe_prepare_images(void)
+ {
+diff --git a/pexpert/pexpert/pexpert.h b/pexpert/pexpert/pexpert.h
+index 769a733..4743401 100644
+--- a/pexpert/pexpert/pexpert.h
++++ b/pexpert/pexpert/pexpert.h
+@@ -494,6 +494,7 @@ extern uint64_t PE_nvram_stashed_x86_macos_slide;
+ 
+ boolean_t PE_reboot_on_panic(void);
+ void PE_sync_panic_buffers(void);
++void PE_k60_reset_now(void);
+ 
+ typedef struct PE_panic_save_context {
+ 	void *psc_buffer;
