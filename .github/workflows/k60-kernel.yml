@@ -46,7 +46,7 @@ jobs:
 
       - name: Apply the K60 firmware log-channel patch
         run: |
-          git -C uefi apply .k60/uefi-log.patch
+          git -C uefi apply "$PWD/.k60/uefi-log.patch"
           git -C uefi status --short | head -20
           grep -n 'UFSDxe' uefi/Platforms/Xiaomi/mondrianPkg/Include/DXE.inc | head -3
           grep -n 'size = 0x' uefi/Resources/Configs/mondrian.toml
