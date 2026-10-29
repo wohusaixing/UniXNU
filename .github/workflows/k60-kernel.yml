@@ -44,6 +44,13 @@ jobs:
           grep -c 'com.apple.kec.pthread' core/profiles/os/ipados-16.6.1-20G81/profile.toml || true
           grep -n 'security-mode-change-enable' core/profiles/os/ipados-16.6.1-20G81/profile.toml || true
 
+      - name: Apply the K60 firmware log-channel patch
+        run: |
+          git -C uefi apply .k60/uefi-log.patch
+          git -C uefi status --short | head -20
+          grep -n 'UFSDxe' uefi/Platforms/Xiaomi/mondrianPkg/Include/DXE.inc | head -3
+          grep -n 'size = 0x' uefi/Resources/Configs/mondrian.toml
+
       - name: Apply this unit's 16 GiB DRAM window
         run: |
           python3 - <<'PY'
