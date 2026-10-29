@@ -32,7 +32,7 @@ jobs:
 
       - name: Pin the core branch to the last buildable commit
         run: |
-          git -C core fetch --depth 1 origin 9f59b34a6dfec7da6471c2b1330e9b85bf0bd127
+          git -C core fetch --depth 1 origin b37751a021b598e711082b00718e08fdd21f64c1
           git -C core checkout --detach FETCH_HEAD
           git -C core log -1 --format='core %h %s'
           grep -c 'com.apple.kec.pthread' core/profiles/os/ipados-16.6.1-20G81/profile.toml || true
