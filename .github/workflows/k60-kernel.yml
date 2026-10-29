@@ -25,6 +25,9 @@ jobs:
           git clone --depth 1 --recurse-submodules --shallow-submodules \
             https://github.com/Emilelu/uefi-mondrian uefi
           git -C core log -1 --format='core %h %s'
+          git -C device fetch --depth 1 origin 581019b0623a926f91164e3dd3ec2750550feea3
+          git -C device checkout --detach FETCH_HEAD
+          git -C device log -1 --format='device %h %s'
           echo "--- device dts memory ---"
           grep -A3 'memory@' device/dts/mondrian.dts || true
           echo "--- device board.toml dram ---"
@@ -32,9 +35,12 @@ jobs:
 
       - name: Pin the core branch to the last buildable commit
         run: |
-          git -C core fetch --depth 1 origin b37751a021b598e711082b00718e08fdd21f64c1
+          git -C core fetch --depth 1 origin 9f59b34a6dfec7da6471c2b1330e9b85bf0bd127
           git -C core checkout --detach FETCH_HEAD
           git -C core log -1 --format='core %h %s'
+          git -C device fetch --depth 1 origin 581019b0623a926f91164e3dd3ec2750550feea3
+          git -C device checkout --detach FETCH_HEAD
+          git -C device log -1 --format='device %h %s'
           grep -c 'com.apple.kec.pthread' core/profiles/os/ipados-16.6.1-20G81/profile.toml || true
           grep -n 'security-mode-change-enable' core/profiles/os/ipados-16.6.1-20G81/profile.toml || true
 
