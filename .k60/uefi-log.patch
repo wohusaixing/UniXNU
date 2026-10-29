@@ -1,0 +1,412 @@
+warning: in the working copy of 'Platforms/Xiaomi/mondrianPkg/Include/APRIORI.inc', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'Platforms/Xiaomi/mondrianPkg/Include/DXE.inc', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'Platforms/Xiaomi/mondrianPkg/Library/MemoryMapLib/MemoryMapLib.c', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'Platforms/Xiaomi/mondrianPkg/mondrian.dsc', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'Resources/Configs/mondrian.toml', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'Platforms/Xiaomi/mondrianPkg/Drivers/XnuLogDxe/XnuLogDxe.c', LF will be replaced by CRLF the next time Git touches it
+diff --git a/Platforms/Xiaomi/mondrianPkg/Drivers/XnuLogDxe/XnuLogDxe.c b/Platforms/Xiaomi/mondrianPkg/Drivers/XnuLogDxe/XnuLogDxe.c
+new file mode 100644
+index 0000000..157fb35
+--- /dev/null
++++ b/Platforms/Xiaomi/mondrianPkg/Drivers/XnuLogDxe/XnuLogDxe.c
+@@ -0,0 +1,200 @@
++/** @file
++  K60 bring-up: copy the XNU panic console mirror (pong_ramoops_console writes
++  the kernel console into the Android ramoops console zone at 0xA7000000 in
++  Linux persistent_ram format) into a file on the LOGFS FAT partition, which
++  Android mounts at /dev/logfs.  The next Android boot can then read the panic
++  text over adb without a screen, a camera or OCR.
++
++  Runs as a DXE driver as soon as a SimpleFileSystem is published (i.e. once
++  the vendor UFS stack, PartitionDxe and FatDxe have found the LOGFS volume).
++**/
++
++#include <Uefi.h>
++#include <Library/UefiBootServicesTableLib.h>
++#include <Library/UefiLib.h>
++#include <Library/BaseLib.h>
++#include <Library/BaseMemoryLib.h>
++#include <Library/MemoryAllocationLib.h>
++#include <Library/PrintLib.h>
++#include <Library/DebugLib.h>
++#include <Protocol/SimpleFileSystem.h>
++#include <Guid/FileInfo.h>
++
++#define K60_RAMOOPS_BASE   0x00000000A7000000ULL
++#define K60_RAMOOPS_SIZE   0x00200000U
++#define K60_RAMOOPS_SIG    0x43474244U
++#define K60_DUMP_FILE      L"XnuLog.txt"
++#define K60_DUMP_LIMIT     (192 * 1024)
++
++typedef struct {
++  UINT32 Sig;
++  UINT32 Start;
++  UINT32 Size;
++} K60_RAMOOPS_HEADER;
++
++STATIC UINT8  mText[K60_DUMP_LIMIT];
++STATIC CHAR8  mHeader[160];
++
++STATIC
++UINTN
++K60CopyRamoops (
++  OUT UINT8  *Out,
++  IN  UINTN   OutCap
++  )
++{
++  volatile K60_RAMOOPS_HEADER  *Hdr;
++  UINT8                        *Data;
++  UINTN                         Cap;
++  UINTN                         Size;
++  UINTN                         Start;
++  UINTN                         Index;
++
++  Hdr = (volatile K60_RAMOOPS_HEADER *)(UINTN)K60_RAMOOPS_BASE;
++  if (Hdr->Sig != K60_RAMOOPS_SIG) {
++    return 0;
++  }
++
++  Cap   = K60_RAMOOPS_SIZE - sizeof (K60_RAMOOPS_HEADER);
++  Size  = Hdr->Size;
++  Start = Hdr->Start;
++  if ((Size == 0) || (Size > Cap)) {
++    return 0;
++  }
++  if (Start >= Cap) {
++    Start = 0;
++  }
++  if (Size > OutCap) {
++    Start = (Start + (Size - OutCap)) % Cap;
++    Size  = OutCap;
++  }
++
++  Data = (UINT8 *)(UINTN)(K60_RAMOOPS_BASE + sizeof (K60_RAMOOPS_HEADER));
++  for (Index = 0; Index < Size; Index++) {
++    Out[Index] = Data[(Start + Index) % Cap];
++  }
++  return Size;
++}
++
++STATIC
++EFI_STATUS
++K60WriteDump (
++  IN EFI_FILE_PROTOCOL  *Root,
++  IN UINTN               Size
++  )
++{
++  EFI_STATUS         Status;
++  EFI_FILE_PROTOCOL  *File;
++  UINTN               HeaderLen;
++  UINTN               Written;
++
++  Status = Root->Open (
++                   Root,
++                   &File,
++                   (CHAR16 *)K60_DUMP_FILE,
++                   EFI_FILE_MODE_READ | EFI_FILE_MODE_WRITE | EFI_FILE_MODE_CREATE,
++                   0
++                   );
++  if (EFI_ERROR (Status)) {
++    return Status;
++  }
++
++  HeaderLen = AsciiSPrint (
++                mHeader,
++                sizeof (mHeader),
++                "K60 XNU log dump (UEFI) ramoops=0x%lx size=%lu\r\n----- BEGIN -----\r\n",
++                (UINT64)K60_RAMOOPS_BASE,
++                (UINT64)Size
++                );
++  Status = File->Write (File, &HeaderLen, mHeader);
++  if (!EFI_ERROR (Status) && (Size != 0)) {
++    Written = Size;
++    Status  = File->Write (File, &Written, mText);
++  }
++  if (!EFI_ERROR (Status)) {
++    HeaderLen = AsciiSPrint (mHeader, sizeof (mHeader), "\r\n----- END -----\r\n");
++    Status    = File->Write (File, &HeaderLen, mHeader);
++  }
++  File->Flush (File);
++  File->Close (File);
++  return Status;
++}
++
++EFI_STATUS
++EFIAPI
++XnuLogEntry (
++  IN EFI_HANDLE        ImageHandle,
++  IN EFI_SYSTEM_TABLE  *SystemTable
++  )
++{
++  EFI_STATUS                    Status;
++  EFI_HANDLE                   *Handles;
++  UINTN                         HandleCount;
++  UINTN                         Index;
++  UINTN                         Size;
++  EFI_SIMPLE_FILE_SYSTEM_PROTOCOL *SimpleFs;
+warning: in the working copy of 'Platforms/Xiaomi/mondrianPkg/Drivers/XnuLogDxe/XnuLogDxe.inf', LF will be replaced by CRLF the next time Git touches it
++  EFI_FILE_PROTOCOL            *Root;
++  EFI_FILE_SYSTEM_INFO         *FsInfo;
++  UINTN                         InfoSize;
++  BOOLEAN                       Wrote;
++
++  Size = K60CopyRamoops (mText, sizeof (mText));
++  DEBUG ((DEBUG_ERROR, "XnuLog: ramoops dump %lu bytes\n", (UINT64)Size));
++
++  Status = gBS->LocateHandleBuffer (
++                  ByProtocol,
++                  &gEfiSimpleFileSystemProtocolGuid,
++                  NULL,
++                  &HandleCount,
++                  &Handles
++                  );
++  if (EFI_ERROR (Status)) {
++    DEBUG ((DEBUG_ERROR, "XnuLog: no SimpleFileSystem: %r\n", Status));
++    return EFI_SUCCESS;
++  }
++
++  Wrote = FALSE;
++  for (Index = 0; Index < HandleCount; Index++) {
++    Status = gBS->HandleProtocol (Handles[Index], &gEfiSimpleFileSystemProtocolGuid, (VOID **)&SimpleFs);
++    if (EFI_ERROR (Status)) {
++      continue;
++    }
++    Status = SimpleFs->OpenVolume (SimpleFs, &Root);
++    if (EFI_ERROR (Status)) {
++      continue;
++    }
++
++    InfoSize = 0;
++    FsInfo   = NULL;
++    Status   = Root->GetInfo (Root, &gEfiFileSystemInfoGuid, &InfoSize, FsInfo);
++    if (Status == EFI_BUFFER_TOO_SMALL) {
++      FsInfo = AllocatePool (InfoSize);
++      if (FsInfo != NULL) {
++        Status = Root->GetInfo (Root, &gEfiFileSystemInfoGuid, &InfoSize, FsInfo);
++      }
++    } else {
++      Status = EFI_UNSUPPORTED;
++    }
++
++    if (!EFI_ERROR (Status) && (FsInfo != NULL)) {
++      DEBUG ((DEBUG_ERROR, "XnuLog: volume '%s'\n", FsInfo->VolumeLabel));
++      if (StrCmp (FsInfo->VolumeLabel, L"LOGFS") == 0) {
++        Status = K60WriteDump (Root, Size);
++        DEBUG ((DEBUG_ERROR, "XnuLog: write to %s -> %r\n", K60_DUMP_FILE, Status));
++        if (!EFI_ERROR (Status)) {
++          Wrote = TRUE;
++        }
++      }
++      FreePool (FsInfo);
++    }
++    Root->Close (Root);
++    if (Wrote) {
++      break;
++    }
++  }
++
++  FreePool (Handles);
++  if (!Wrote) {
++    DEBUG ((DEBUG_ERROR, "XnuLog: no LOGFS volume found\n"));
++  }
++  return EFI_SUCCESS;
++}
+diff --git a/Platforms/Xiaomi/mondrianPkg/Drivers/XnuLogDxe/XnuLogDxe.inf b/Platforms/Xiaomi/mondrianPkg/Drivers/XnuLogDxe/XnuLogDxe.inf
+new file mode 100644
+index 0000000..5add44d
+--- /dev/null
++++ b/Platforms/Xiaomi/mondrianPkg/Drivers/XnuLogDxe/XnuLogDxe.inf
+@@ -0,0 +1,35 @@
++## @file
++#  K60: dump the XNU ramoops console mirror to LOGFS/XnuLog.txt.
++##
++[Defines]
++  INF_VERSION    = 0x0001001B
++  BASE_NAME      = XnuLogDxe
++  FILE_GUID      = 57C6B6BF-05ED-40C2-A61B-EE28D683B8B6
++  MODULE_TYPE    = DXE_DRIVER
++  VERSION_STRING = 1.0
++  ENTRY_POINT    = XnuLogEntry
++
++[Sources]
++  XnuLogDxe.c
++
++[Packages]
++  MdePkg/MdePkg.dec
++
++[LibraryClasses]
++  UefiDriverEntryPoint
++  UefiBootServicesTableLib
++  UefiLib
++  BaseLib
++  BaseMemoryLib
++  MemoryAllocationLib
++  PrintLib
++  DebugLib
++
++[Protocols]
++  gEfiSimpleFileSystemProtocolGuid
++
++[Guids]
++  gEfiFileSystemInfoGuid
++
++[Depex]
++  gEfiSimpleFileSystemProtocolGuid
+diff --git a/Platforms/Xiaomi/mondrianPkg/Include/APRIORI.inc b/Platforms/Xiaomi/mondrianPkg/Include/APRIORI.inc
+index b16153a..4b553f2 100644
+--- a/Platforms/Xiaomi/mondrianPkg/Include/APRIORI.inc
++++ b/Platforms/Xiaomi/mondrianPkg/Include/APRIORI.inc
+@@ -17,12 +17,42 @@ APRIORI DXE {
+ 
+   INF MdeModulePkg/Universal/ResetSystemRuntimeDxe/ResetSystemRuntimeDxe.inf
+ 
++  # K60: SM8475 vendor storage chain (pong/PalimaLAA binaries, same SoC)
++  INF QcomPkg/Drivers/EnvDxe/EnvDxe.inf
++  INF QcomPkg/Drivers/ShmBridgeDxe/ShmBridgeDxeLA.inf
++  INF QcomPkg/Drivers/TzDxe/ScmDxeLA.inf
++  INF QcomPkg/Drivers/TzDxe/TzDxeLA.inf
++  INF QcomPkg/Drivers/ChipInfoDxe/ChipInfoDxe.inf
++  INF QcomPkg/Drivers/PlatformInfoDxe/PlatformInfoDxe.inf
++  INF QcomPkg/Drivers/SmemDxe/SmemDxe.inf
++  INF QcomPkg/Drivers/IPCCDxe/IPCCDxe.inf
++  INF QcomPkg/Drivers/GLinkDxe/GLinkDxe.inf
++  INF QcomPkg/Drivers/RpmhDxe/RpmhDxe.inf
++  INF QcomPkg/Drivers/NpaDxe/NpaDxe.inf
++  INF QcomPkg/Drivers/DALSYSDxe/DALSYSDxe.inf
++  INF QcomPkg/Drivers/HALIOMMUDxe/HALIOMMUDxe.inf
++  INF QcomPkg/Drivers/HWIODxe/HWIODxe.inf
++  INF QcomPkg/Drivers/TLMMDxe/TLMMDxe.inf
++  INF QcomPkg/Drivers/I2CDxe/I2CDxe.inf
++  INF QcomPkg/Drivers/SPMIDxe/SPMIDxe.inf
++  INF QcomPkg/Drivers/PmicDxe/PmicDxeLa.inf
++  INF QcomPkg/Drivers/ClockDxe/ClockDxe.inf
++  INF QcomPkg/Drivers/VcsDxe/VcsDxe.inf
++  INF QcomPkg/Drivers/ICBDxe/ICBDxe.inf
++  INF QcomPkg/Drivers/CmdDbDxe/CmdDbDxe.inf
++  INF QcomPkg/Drivers/PwrUtilsDxe/PwrUtilsDxe.inf
++  INF QcomPkg/Drivers/ULogDxe/ULogDxe.inf
++  INF QcomPkg/Drivers/UFSDxe/UFSDxe.inf
++
+   INF MdeModulePkg/Universal/Disk/DiskIoDxe/DiskIoDxe.inf
+   INF MdeModulePkg/Universal/Disk/PartitionDxe/PartitionDxe.inf
+   INF MdeModulePkg/Universal/Disk/UnicodeCollation/EnglishDxe/EnglishDxe.inf
+ 
+   INF FatPkg/EnhancedFatDxe/Fat.inf
+ 
++  # K60: dump the XNU ramoops console mirror to LOGFS/XnuLog.txt
++  INF mondrianPkg/Drivers/XnuLogDxe/XnuLogDxe.inf
++
+   INF MdeModulePkg/Universal/Variable/RuntimeDxe/VariableRuntimeDxe.inf
+ 
+   # K60: ABL splash framebuffer GOP driver (open source)
+diff --git a/Platforms/Xiaomi/mondrianPkg/Include/DXE.inc b/Platforms/Xiaomi/mondrianPkg/Include/DXE.inc
+index 9d450b7..e166232 100644
+--- a/Platforms/Xiaomi/mondrianPkg/Include/DXE.inc
++++ b/Platforms/Xiaomi/mondrianPkg/Include/DXE.inc
+@@ -43,3 +43,34 @@
+ 
+   # K60: ABL leaves the splash framebuffer — use the open-source GOP driver
+   INF SiliciumPkg/Drivers/SimpleFbDxe/SimpleFbDxe.inf
++
++  # K60: SM8475 vendor storage chain, so the firmware can reach the UFS
++  # LOGFS/rawdump partitions itself (log dump without Android help).
++  INF QcomPkg/Drivers/EnvDxe/EnvDxe.inf
++  INF QcomPkg/Drivers/ShmBridgeDxe/ShmBridgeDxeLA.inf
++  INF QcomPkg/Drivers/TzDxe/ScmDxeLA.inf
++  INF QcomPkg/Drivers/TzDxe/TzDxeLA.inf
++  INF QcomPkg/Drivers/ChipInfoDxe/ChipInfoDxe.inf
++  INF QcomPkg/Drivers/PlatformInfoDxe/PlatformInfoDxe.inf
++  INF QcomPkg/Drivers/SmemDxe/SmemDxe.inf
++  INF QcomPkg/Drivers/IPCCDxe/IPCCDxe.inf
++  INF QcomPkg/Drivers/GLinkDxe/GLinkDxe.inf
++  INF QcomPkg/Drivers/RpmhDxe/RpmhDxe.inf
++  INF QcomPkg/Drivers/NpaDxe/NpaDxe.inf
++  INF QcomPkg/Drivers/DALSYSDxe/DALSYSDxe.inf
++  INF QcomPkg/Drivers/HALIOMMUDxe/HALIOMMUDxe.inf
++  INF QcomPkg/Drivers/HWIODxe/HWIODxe.inf
++  INF QcomPkg/Drivers/TLMMDxe/TLMMDxe.inf
++  INF QcomPkg/Drivers/I2CDxe/I2CDxe.inf
++  INF QcomPkg/Drivers/SPMIDxe/SPMIDxe.inf
++  INF QcomPkg/Drivers/PmicDxe/PmicDxeLa.inf
++  INF QcomPkg/Drivers/ClockDxe/ClockDxe.inf
++  INF QcomPkg/Drivers/VcsDxe/VcsDxe.inf
++  INF QcomPkg/Drivers/ICBDxe/ICBDxe.inf
++  INF QcomPkg/Drivers/CmdDbDxe/CmdDbDxe.inf
++  INF QcomPkg/Drivers/PwrUtilsDxe/PwrUtilsDxe.inf
++  INF QcomPkg/Drivers/ULogDxe/ULogDxe.inf
++  INF QcomPkg/Drivers/UFSDxe/UFSDxe.inf
++
++  # K60: XNU ramoops console mirror -> LOGFS/XnuLog.txt
++  INF mondrianPkg/Drivers/XnuLogDxe/XnuLogDxe.inf
+diff --git a/Platforms/Xiaomi/mondrianPkg/Library/MemoryMapLib/MemoryMapLib.c b/Platforms/Xiaomi/mondrianPkg/Library/MemoryMapLib/MemoryMapLib.c
+index deb109c..4750eb4 100644
+--- a/Platforms/Xiaomi/mondrianPkg/Library/MemoryMapLib/MemoryMapLib.c
++++ b/Platforms/Xiaomi/mondrianPkg/Library/MemoryMapLib/MemoryMapLib.c
+@@ -60,8 +60,7 @@ gMemoryDescriptor[] = {
+   {"tags_region",        0xE8900000, 0x01200000, AddMem, MEM_RES  , UNCACHEABLE, Reserv , UNCACHED_UNBUFFERED_XN},
+   {"QTEE",        0xE9B00000, 0x00500000, AddMem, MEM_RES  , UNCACHEABLE, Reserv , UNCACHED_UNBUFFERED_XN},
+   // ---- UEFI 系统区（K60 布局）----
+-  {"UEFI FD",            0xA7400000, 0x00300000, AddMem, SYS_MEM  , SYS_MEM_CAP, BsData , WRITE_BACK},
+-  {"FD Reserved",   0xA7700000, 0x00200000, AddMem, SYS_MEM  , SYS_MEM_CAP, BsData , WRITE_BACK},
++  {"UEFI FD",            0xA7400000, 0x00500000, AddMem, SYS_MEM  , SYS_MEM_CAP, BsData , WRITE_BACK},
+   {"PMIC ARB SPMI",      0x0C400000, 0x2800000, AddDev, MMAP_IO  , UNCACHEABLE, MmIO   , UNCACHED_UNBUFFERED_XN},
+   {"CPU Vectors",      0xA7900000, 0x00001000, AddMem, SYS_MEM  , SYS_MEM_CAP, BsData , WRITE_BACK},
+   {"Info Blk",           0xA7901000, 0x00001000, AddMem, SYS_MEM  , SYS_MEM_CAP, RtData , WRITE_BACK_XN},
+diff --git a/Platforms/Xiaomi/mondrianPkg/mondrian.dsc b/Platforms/Xiaomi/mondrianPkg/mondrian.dsc
+index d937d7f..b0fd154 100644
+--- a/Platforms/Xiaomi/mondrianPkg/mondrian.dsc
++++ b/Platforms/Xiaomi/mondrianPkg/mondrian.dsc
+@@ -133,6 +133,40 @@
+   # resolve this module otherwise.
+   mondrian/AcpiTables.inf
+ 
++  #
++  # K60: SM8475 vendor storage chain (pong/PalimaLAA binaries)
++  #
++  QcomPkg/Drivers/EnvDxe/EnvDxe.inf
++  QcomPkg/Drivers/ShmBridgeDxe/ShmBridgeDxeLA.inf
++  QcomPkg/Drivers/TzDxe/ScmDxeLA.inf
++  QcomPkg/Drivers/TzDxe/TzDxeLA.inf
++  QcomPkg/Drivers/ChipInfoDxe/ChipInfoDxe.inf
++  QcomPkg/Drivers/PlatformInfoDxe/PlatformInfoDxe.inf
++  QcomPkg/Drivers/SmemDxe/SmemDxe.inf
++  QcomPkg/Drivers/IPCCDxe/IPCCDxe.inf
++  QcomPkg/Drivers/GLinkDxe/GLinkDxe.inf
++  QcomPkg/Drivers/RpmhDxe/RpmhDxe.inf
++  QcomPkg/Drivers/NpaDxe/NpaDxe.inf
++  QcomPkg/Drivers/DALSYSDxe/DALSYSDxe.inf
++  QcomPkg/Drivers/HALIOMMUDxe/HALIOMMUDxe.inf
++  QcomPkg/Drivers/HWIODxe/HWIODxe.inf
++  QcomPkg/Drivers/TLMMDxe/TLMMDxe.inf
++  QcomPkg/Drivers/I2CDxe/I2CDxe.inf
++  QcomPkg/Drivers/SPMIDxe/SPMIDxe.inf
++  QcomPkg/Drivers/PmicDxe/PmicDxeLa.inf
++  QcomPkg/Drivers/ClockDxe/ClockDxe.inf
++  QcomPkg/Drivers/VcsDxe/VcsDxe.inf
++  QcomPkg/Drivers/ICBDxe/ICBDxe.inf
++  QcomPkg/Drivers/CmdDbDxe/CmdDbDxe.inf
++  QcomPkg/Drivers/PwrUtilsDxe/PwrUtilsDxe.inf
++  QcomPkg/Drivers/ULogDxe/ULogDxe.inf
++  QcomPkg/Drivers/UFSDxe/UFSDxe.inf
++
++  #
++  # K60: XNU ramoops console mirror -> LOGFS/XnuLog.txt
++  #
++  mondrianPkg/Drivers/XnuLogDxe/XnuLogDxe.inf
++
+ # K60 debug: ASSERT prints and continues (vendor EnvDxe ctor ASSERT, no RamPartitionDxe)
+ [PcdsFixedAtBuild]
+   gEfiMdePkgTokenSpaceGuid.PcdDebugPropertyMask|0x03
+diff --git a/Resources/Configs/mondrian.toml b/Resources/Configs/mondrian.toml
+index 643be54..0497833 100755
+--- a/Resources/Configs/mondrian.toml
++++ b/Resources/Configs/mondrian.toml
+@@ -10,7 +10,7 @@ requires_kernel_header = true
+ #
+ [uefi_fd]
+ base = 0xA7400000
+-size = 0x300000
++size = 0x500000
+ 
+ #
+ # Android Boot Image Kernel Configs
