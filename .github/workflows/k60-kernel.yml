@@ -50,21 +50,6 @@ jobs:
           git -C device log -1 --format='device %h %s'
           git -C uefi log -1 --format='uefi %h %s'
 
-      - name: Enable the source pthread and corecrypto providers
-        run: |
-          python3 - <<'PY'
-          from pathlib import Path
-          path = Path('device/configs/mondrian_defconfig')
-          text = path.read_text()
-          for name in ('CONFIG_XNU_SOURCE_PTHREAD', 'CONFIG_XNU_SOURCE_CORECRYPTO14'):
-              text = text.replace(name + '=n', name + '=y')
-          if 'CONFIG_XNU_BUILD_ARCHIVES' not in text:
-              text += 'CONFIG_XNU_BUILD_ARCHIVES=y\n'
-          path.write_text(text)
-          print('enabled source pthread + corecrypto + archive builders')
-          PY
-          grep -nE 'SOURCE_PTHREAD|SOURCE_CORECRYPTO14' device/configs/mondrian_defconfig
-
       - uses: actions/setup-python@v5
         with:
           python-version: "3.13"
@@ -125,6 +110,31 @@ jobs:
           ./unixnu defconfig mondrian_defconfig -D ../device
           ./unixnu fetch -D ../device
           ./unixnu status -D ../device 2>&1 | tail -40
+
+      - name: Add the pthread kext to the prelink roots
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+          p = Path('core/profiles/os/ipados-16.6.1-20G81/profile.toml')
+          t = p.read_text()
+          if 'com.apple.kec.pthread' in t:
+              print('pthread kext already in roots')
+              raise SystemExit(0)
+          m = re.search(r'"roots" = \[(.*?)\]\n', t, re.S)
+          if not m:
+              raise SystemExit('roots list not found')
+          body = m.group(1).rstrip()
+          if body.endswith(','):
+              body = body + ' "com.apple.kec.pthread"'
+          else:
+              body = body + ', "com.apple.kec.pthread"'
+          t = t[:m.start(1)] + body + t[m.end(1):]
+          p.write_text(t)
+          print('added com.apple.kec.pthread to prelink roots')
+          PY
+          grep -c 'com.apple.kec.pthread' core/profiles/os/ipados-16.6.1-20G81/profile.toml
+          grep -n 'CONFIG_XNU_SOURCE_PTHREAD\|CONFIG_XNU_SOURCE_CORECRYPTO14' device/configs/mondrian_defconfig
 
       - name: Build the XNU kernel and prelink
         env:
